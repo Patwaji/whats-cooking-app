@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
 import { useToast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabase/client"
 import { signIn } from "@/lib/actions"
 
 function SubmitButton() {
@@ -47,6 +48,11 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         title: "Login Successful!",
         description: state.success,
         duration: 3000,
+      })
+      
+      // Force refresh the auth state
+      supabase.auth.refreshSession().then(() => {
+        console.log("Session refreshed after login")
       })
       
       // Call onSuccess to close the modal
