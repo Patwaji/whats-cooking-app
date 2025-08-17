@@ -42,20 +42,37 @@ export default function HomePage() {
   useEffect(() => {
     // Get initial session
     const getInitialSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      setUser(session?.user ?? null)
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        
+        console.log("Current session:", session?.user?.email || "No user")
+        setUser(session?.user ?? null)
 
-      if (session?.user) {
-        // Fetch user profile
-        const { data: profile } = await supabase
-          .from("user_profiles")
-          .select("full_name")
-          .eq("id", session.user.id)
-          .single()
+        if (session?.user) {
+          console.log("User found, fetching profile...")
+          // Fetch user profile
+          const { data: profile, error: profileError } = await supabase
+            .from("user_profiles")
+            .select("full_name")
+            .eq("id", session.user.id)
+            .single()
 
-        setUserProfile(profile)
+          if (profileError) {
+            console.error("Profile fetch error:", profileError)
+            // If no profile exists, still show user as authenticated
+            setUserProfile({ full_name: session.user.email?.split('@')[0] || 'User' })
+          } else {
+            console.log("Profile loaded:", profile)
+            setUserProfile(profile)
+          }
+        } else {
+          console.log("No authenticated user found")
+          setUserProfile(null)
+        }
+      } catch (error) {
+        console.error("Error getting session:", error)
       }
     }
 
@@ -65,18 +82,28 @@ export default function HomePage() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("Auth state changed:", event, session?.user?.email || "No user")
       setUser(session?.user ?? null)
 
       if (session?.user) {
+        console.log("User authenticated, fetching profile...")
         // Fetch user profile
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("user_profiles")
           .select("full_name")
           .eq("id", session.user.id)
           .single()
 
-        setUserProfile(profile)
+        if (profileError) {
+          console.error("Profile fetch error during auth change:", profileError)
+          // If no profile exists, still show user as authenticated  
+          setUserProfile({ full_name: session.user.email?.split('@')[0] || 'User' })
+        } else {
+          console.log("Profile loaded during auth change:", profile)
+          setUserProfile(profile)
+        }
       } else {
+        console.log("User signed out")
         setUserProfile(null)
       }
     })
