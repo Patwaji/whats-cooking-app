@@ -84,15 +84,26 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
   const cookieStore = cookies()
 
   try {
+    console.log("Verifying OTP for email:", email.toString(), "OTP:", otp.toString())
+    
     // Verify OTP
     const { data: isValid, error: verifyError } = await supabase.rpc("verify_otp", {
       user_email: email.toString(),
       provided_otp: otp.toString(),
     })
 
-    if (verifyError || !isValid) {
-      return { error: "Invalid or expired OTP" }
+    console.log("OTP verification result:", { isValid, verifyError })
+
+    if (verifyError) {
+      console.error("OTP verification database error:", verifyError)
+      return { error: "Database error during OTP verification. Please check if the database functions are set up correctly." }
     }
+    
+    if (!isValid) {
+      return { error: "Invalid or expired OTP. Please check your email for the correct code." }
+    }
+    
+    console.log("OTP verification successful")
 
     // Get pending signup data
     const pendingSignup = cookieStore.get("pending_signup")
@@ -102,7 +113,7 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
 
     const userData = JSON.parse(pendingSignup.value)
 
-    // Create user account
+    // Create user account with email confirmation disabled (since we handle OTP ourselves)
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: userData.email,
       password: userData.password,
@@ -110,27 +121,44 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
         emailRedirectTo:
           process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
           `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/auth/callback`,
+        data: {
+          full_name: userData.fullName,
+        },
       },
     })
 
     if (authError) {
+      console.error("Supabase signup error:", authError)
       return { error: authError.message }
     }
 
+    console.log("User created in Supabase:", authData.user?.id, authData.user?.email)
+
     // Create user profile
     if (authData.user) {
-      const { error: profileError } = await supabase.from("user_profiles").insert({
+      const { data: profileData, error: profileError } = await supabase.from("user_profiles").insert({
         id: authData.user.id,
         full_name: userData.fullName,
         email: userData.email,
-      })
+      }).select()
 
       if (profileError) {
         console.error("Profile creation error:", profileError)
+        // Don't fail the whole process if profile creation fails
+      } else {
+        console.log("User profile created:", profileData)
       }
 
       // Send welcome email
-      await sendWelcomeEmail(userData.email, userData.fullName)
+      try {
+        await sendWelcomeEmail(userData.email, userData.fullName)
+        console.log("Welcome email sent successfully")
+      } catch (emailError) {
+        console.error("Failed to send welcome email:", emailError)
+        // Don't fail the signup process if email fails
+      }
+    } else {
+      console.error("No user data returned from Supabase signup")
     }
 
     // Clear pending signup data
