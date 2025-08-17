@@ -5,7 +5,7 @@ const resend = new Resend(process.env.RESEND_API_KEY)
 export async function sendOTPEmail(email: string, otp: string, fullName?: string) {
   try {
     const { data, error } = await resend.emails.send({
-      from: 'What\'s Cooking <doculingua@gmail.com>',
+      from: 'What\'s Cooking <onboarding@resend.dev>',
       to: [email],
       subject: 'Your verification code for What\'s Cooking',
       html: `
@@ -123,7 +123,7 @@ The What's Cooking Team
 export async function sendWelcomeEmail(email: string, fullName: string) {
   try {
     const { data, error } = await resend.emails.send({
-      from: 'What\'s Cooking <doculingua@gmail.com>',
+      from: 'What\'s Cooking <onboarding@resend.dev>',
       to: [email],
       subject: 'Welcome to What\'s Cooking! 🍳',
       html: `
