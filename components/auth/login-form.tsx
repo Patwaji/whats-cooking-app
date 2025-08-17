@@ -50,9 +50,22 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         duration: 3000,
       })
       
-      // Force refresh the auth state
-      supabase.auth.refreshSession().then(() => {
+      // Force refresh the auth state and trigger manual check
+      supabase.auth.refreshSession().then(async () => {
         console.log("Session refreshed after login")
+        
+        // Get the current session
+        const { data: { session } } = await supabase.auth.getSession()
+        console.log("Manual session check after login:", session?.user?.email || "No session")
+        
+        // Manually trigger the auth state change event
+        if (session) {
+          console.log("Manually triggering SIGNED_IN event")
+          // This should trigger the onAuthStateChange listener in the main page
+          supabase.auth.onAuthStateChange((event, session) => {
+            console.log("Manual auth state change:", event, session?.user?.email)
+          })
+        }
       })
       
       // Call onSuccess to close the modal
