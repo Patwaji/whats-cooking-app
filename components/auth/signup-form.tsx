@@ -29,7 +29,7 @@ function SubmitButton() {
 }
 
 interface SignUpFormProps {
-  onOTPRequired?: (email: string, otpCode?: string) => void
+  onOTPRequired?: (email: string) => void
 }
 
 export default function SignUpForm({ onOTPRequired }: SignUpFormProps) {
@@ -37,7 +37,7 @@ export default function SignUpForm({ onOTPRequired }: SignUpFormProps) {
 
   // Handle OTP requirement
   if (state?.requiresOTP && onOTPRequired) {
-    onOTPRequired(state.email, state.otpCode)
+    onOTPRequired(state.email)
   }
 
   return (

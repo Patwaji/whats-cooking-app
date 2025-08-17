@@ -33,23 +33,15 @@ function SubmitButton() {
 
 interface OTPVerificationFormProps {
   email: string
-  demoOtpCode?: string
   onSuccess?: () => void
   onBack?: () => void
 }
 
-export default function OTPVerificationForm({ email, demoOtpCode, onSuccess, onBack }: OTPVerificationFormProps) {
+export default function OTPVerificationForm({ email, onSuccess, onBack }: OTPVerificationFormProps) {
   const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [state, formAction] = useActionState(verifyOTPAndSignUp, null)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
-  // Auto-fill demo OTP code if provided
-  useEffect(() => {
-    if (demoOtpCode && demoOtpCode.length === 6) {
-      const otpArray = demoOtpCode.split("")
-      setOtp(otpArray)
-    }
-  }, [demoOtpCode])
 
   // Handle successful verification
   useEffect(() => {
@@ -93,13 +85,6 @@ export default function OTPVerificationForm({ email, demoOtpCode, onSuccess, onB
         <h1 className="text-4xl font-semibold tracking-tight text-white">Verify Your Email</h1>
         <p className="text-lg text-gray-400">We've sent a 6-digit code to</p>
         <p className="text-amber-400 font-medium">{email}</p>
-        {demoOtpCode && (
-          <div className="bg-blue-500/10 border border-blue-500/50 text-blue-400 px-4 py-3 rounded mt-4">
-            <p className="text-sm">
-              Demo Mode: Your OTP code is <strong>{demoOtpCode}</strong>
-            </p>
-          </div>
-        )}
       </div>
 
       <form action={formAction} className="space-y-6">

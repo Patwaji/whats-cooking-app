@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { sendOTPEmail, sendWelcomeEmail } from "@/lib/email"
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
 
@@ -25,7 +26,16 @@ export async function signUp(prevState: any, formData: FormData) {
     const { data: otpData, error: otpError } = await supabase.rpc("generate_otp", { user_email: email.toString() })
 
     if (otpError) {
-      return { error: "Failed to generate OTP" }
+      console.error("Failed to generate OTP:", otpError)
+      return { error: "Failed to generate verification code. Please try again." }
+    }
+
+    // Send OTP via email
+    const emailResult = await sendOTPEmail(email.toString(), otpData, fullName.toString())
+    
+    if (!emailResult.success) {
+      console.error("Failed to send OTP email:", emailResult.error)
+      return { error: "Failed to send verification email. Please try again." }
     }
 
     // Store user data temporarily in session for OTP verification
@@ -44,16 +54,12 @@ export async function signUp(prevState: any, formData: FormData) {
       },
     )
 
-    // In a real app, you would send the OTP via email here
-    // For demo purposes, we'll return it in the response
-    console.log("OTP Code:", otpData)
+    console.log("OTP sent successfully to:", email.toString())
 
     return {
-      success: "OTP sent to your email. Please check and verify.",
+      success: "Verification code sent to your email. Please check your inbox and spam folder.",
       requiresOTP: true,
       email: email.toString(),
-      // Remove this in production - only for demo
-      otpCode: otpData,
     }
   } catch (error) {
     console.error("Sign up error:", error)
@@ -122,6 +128,9 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
       if (profileError) {
         console.error("Profile creation error:", profileError)
       }
+
+      // Send welcome email
+      await sendWelcomeEmail(userData.email, userData.fullName)
     }
 
     // Clear pending signup data

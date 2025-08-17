@@ -17,20 +17,14 @@ interface AuthModalProps {
 export function AuthModal({ isOpen, onClose, onAuthSuccess, defaultTab = "login" }: AuthModalProps) {
   const [activeTab, setActiveTab] = useState<"login" | "signup" | "otp">(defaultTab)
   const [otpEmail, setOTPEmail] = useState("")
-  const [otpCode, setOTPCode] = useState("")
-
-  const handleOTPRequired = (email: string, demoOtpCode?: string) => {
+  const handleOTPRequired = (email: string) => {
     setOTPEmail(email)
-    if (demoOtpCode) {
-      setOTPCode(demoOtpCode)
-    }
     setActiveTab("otp")
   }
 
   const handleOTPSuccess = () => {
     setActiveTab("login")
     setOTPEmail("")
-    setOTPCode("")
     if (onAuthSuccess) {
       onAuthSuccess()
     }
@@ -46,7 +40,6 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess, defaultTab = "login"
   const handleClose = () => {
     setActiveTab(defaultTab)
     setOTPEmail("")
-    setOTPCode("")
     onClose()
   }
 
@@ -97,7 +90,6 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess, defaultTab = "login"
           {activeTab === "otp" && (
             <OTPVerificationForm
               email={otpEmail}
-              demoOtpCode={otpCode}
               onSuccess={handleOTPSuccess}
               onBack={() => setActiveTab("signup")}
             />
