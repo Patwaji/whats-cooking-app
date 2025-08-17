@@ -209,6 +209,7 @@ export default function HomePage() {
                 <Button
                   variant="outline"
                   className="border-primary text-primary hover:bg-primary hover:text-primary-foreground bg-transparent"
+                  onClick={() => router.push("/saved-recipes")}
                 >
                   Saved Recipes
                 </Button>
@@ -245,7 +246,12 @@ export default function HomePage() {
         </div>
       </header>
 
-      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} defaultTab={authModalTab} />
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+        onAuthSuccess={() => setShowAuthModal(false)}
+        defaultTab={authModalTab} 
+      />
 
       <section className="relative pt-24 pb-16 px-4 bg-gradient-to-br from-muted via-background to-muted">
         <div className="container mx-auto max-w-6xl text-center">
