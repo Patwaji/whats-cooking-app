@@ -1,36 +1,13 @@
 "use client"
 
-import { useActionState } from "react"
-import { useFormStatus } from "react-dom"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Loader2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabase/client"
-import { signIn } from "@/lib/actions"
 
-function SubmitButton() {
-  const { pending } = useFormStatus()
-
-  return (
-    <Button
-      type="submit"
-      disabled={pending}
-      className="w-full bg-amber-600 hover:bg-amber-700 text-white py-6 text-lg font-medium rounded-lg h-[60px]"
-    >
-      {pending ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Signing in...
-        </>
-      ) : (
-        "Sign In"
-      )}
-    </Button>
-  )
-}
 
 interface LoginFormProps {
   onSuccess?: () => void
@@ -39,39 +16,57 @@ interface LoginFormProps {
 export default function LoginForm({ onSuccess }: LoginFormProps) {
   const router = useRouter()
   const { toast } = useToast()
-  const [state, formAction] = useActionState(signIn, null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Handle successful login
-  useEffect(() => {
-    if (state?.success) {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    const formData = new FormData(e.currentTarget)
+    const email = formData.get('email') as string
+    const password = formData.get('password') as string
+
+    if (!email || !password) {
+      setError('Email and password are required')
+      setLoading(false)
+      return
+    }
+
+    try {
+      console.log('Attempting client-side login...')
+      
+      const { data, error: loginError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (loginError) {
+        console.error('Login error:', loginError)
+        setError(loginError.message)
+        setLoading(false)
+        return
+      }
+
+      console.log('Client-side login successful:', data.user?.email)
+      
       toast({
         title: "Login Successful!",
-        description: state.success,
+        description: "Welcome back! You have been signed in successfully.",
         duration: 3000,
       })
-      
-      // Force refresh the auth state and trigger manual check
-      supabase.auth.refreshSession().then(async () => {
-        console.log("Session refreshed after login")
-        
-        // Get the current session
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log("Manual session check after login:", session?.user?.email || "No session")
-        
-        // Manually trigger the auth state change event
-        if (session) {
-          console.log("Manually triggering SIGNED_IN event")
-          // This should trigger the onAuthStateChange listener in the main page
-          supabase.auth.onAuthStateChange((event, session) => {
-            console.log("Manual auth state change:", event, session?.user?.email)
-          })
-        }
-      })
-      
-      // Call onSuccess to close the modal
+
+      // The auth state change should happen automatically now
       onSuccess?.()
+      
+    } catch (error) {
+      console.error('Unexpected login error:', error)
+      setError('An unexpected error occurred. Please try again.')
+    } finally {
+      setLoading(false)
     }
-  }, [state, toast, onSuccess])
+  }
 
   return (
     <div className="w-full max-w-md space-y-8">
@@ -80,15 +75,9 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         <p className="text-lg text-gray-400">Sign in to your account</p>
       </div>
 
-      <form action={formAction} className="space-y-6">
-        {state?.error && (
-          <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded">{state.error}</div>
-        )}
-        
-        {state?.success && (
-          <div className="bg-green-500/10 border border-green-500/50 text-green-400 px-4 py-3 rounded">
-            {state.success}
-          </div>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded">{error}</div>
         )}
 
         <div className="space-y-4">
@@ -119,7 +108,20 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
           </div>
         </div>
 
-        <SubmitButton />
+        <Button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-amber-600 hover:bg-amber-700 text-white py-6 text-lg font-medium rounded-lg h-[60px]"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Signing in...
+            </>
+          ) : (
+            "Sign In"
+          )}
+        </Button>
       </form>
     </div>
   )
