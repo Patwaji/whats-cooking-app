@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Loader2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
+import { useToast } from "@/hooks/use-toast"
 import { signIn } from "@/lib/actions"
 
 function SubmitButton() {
@@ -36,15 +37,22 @@ interface LoginFormProps {
 
 export default function LoginForm({ onSuccess }: LoginFormProps) {
   const router = useRouter()
+  const { toast } = useToast()
   const [state, formAction] = useActionState(signIn, null)
 
   // Handle successful login
   useEffect(() => {
     if (state?.success) {
+      toast({
+        title: "Login Successful!",
+        description: state.success,
+        duration: 3000,
+      })
+      
+      // Call onSuccess to close the modal
       onSuccess?.()
-      router.push("/")
     }
-  }, [state, router, onSuccess])
+  }, [state, toast, onSuccess])
 
   return (
     <div className="w-full max-w-md space-y-8">
@@ -56,6 +64,12 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
       <form action={formAction} className="space-y-6">
         {state?.error && (
           <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded">{state.error}</div>
+        )}
+        
+        {state?.success && (
+          <div className="bg-green-500/10 border border-green-500/50 text-green-400 px-4 py-3 rounded">
+            {state.success}
+          </div>
         )}
 
         <div className="space-y-4">

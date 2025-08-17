@@ -159,7 +159,7 @@ export async function signIn(prevState: any, formData: FormData) {
   const supabase = createClient()
 
   try {
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: email.toString(),
       password: password.toString(),
     })
@@ -168,7 +168,9 @@ export async function signIn(prevState: any, formData: FormData) {
       return { error: error.message }
     }
 
-    return { success: true }
+    console.log("User signed in successfully:", data.user?.email)
+    
+    return { success: "Welcome back! You have been signed in successfully." }
   } catch (error) {
     console.error("Login error:", error)
     return { error: "An unexpected error occurred. Please try again." }
@@ -179,5 +181,5 @@ export async function signIn(prevState: any, formData: FormData) {
 export async function signOut() {
   const supabase = createClient()
   await supabase.auth.signOut()
-  redirect("/auth/login")
+  redirect("/")
 }
