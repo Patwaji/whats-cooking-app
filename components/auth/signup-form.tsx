@@ -1,6 +1,6 @@
 "use client"
 
-import { useActionState } from "react"
+import { useActionState, useEffect } from "react"
 import { useFormStatus } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -35,10 +35,12 @@ interface SignUpFormProps {
 export default function SignUpForm({ onOTPRequired }: SignUpFormProps) {
   const [state, formAction] = useActionState(signUp, null)
 
-  // Handle OTP requirement
-  if (state?.requiresOTP && onOTPRequired) {
-    onOTPRequired(state.email)
-  }
+  // Handle OTP requirement only after state changes, not during render
+  useEffect(() => {
+    if (state?.requiresOTP && onOTPRequired) {
+      onOTPRequired(state.email)
+    }
+  }, [state, onOTPRequired])
 
   return (
     <div className="w-full max-w-md space-y-8">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import LoginForm from "./login-form"
@@ -14,8 +14,12 @@ interface AuthModalProps {
   defaultTab?: "login" | "signup"
 }
 
-export function AuthModal({ isOpen, onClose, onAuthSuccess, defaultTab = "login" }: AuthModalProps) {
+const AuthModal = ({ isOpen, onClose, onAuthSuccess, defaultTab = "login" }: AuthModalProps) => {
   const [activeTab, setActiveTab] = useState<"login" | "signup" | "otp">(defaultTab)
+  // Only reset tab when modal is opened, not on every close
+  useEffect(() => {
+    if (isOpen) setActiveTab(defaultTab)
+  }, [isOpen, defaultTab])
   const [otpEmail, setOTPEmail] = useState("")
   const handleOTPRequired = (email: string) => {
     setOTPEmail(email)
@@ -28,6 +32,7 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess, defaultTab = "login"
     if (onAuthSuccess) {
       onAuthSuccess()
     }
+    // Modal will close and parent will refresh session
   }
 
   const handleLoginSuccess = () => {

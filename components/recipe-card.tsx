@@ -1,4 +1,6 @@
 "use client"
+
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -7,7 +9,7 @@ import { Heart, Clock, Eye } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface Recipe {
-  id: number
+  id: string
   name: string
   description: string
   difficulty: "Easy" | "Medium" | "Hard"
@@ -18,7 +20,7 @@ interface Recipe {
 
 interface RecipeCardProps {
   recipe: Recipe
-  onSave: (recipeId: number) => void // Updated to pass recipe ID
+  onSave: (recipeId: string) => void // Updated to pass recipe ID as string
   onView?: () => void
 }
 
@@ -38,6 +40,13 @@ export function RecipeCard({ recipe, onSave, onView }: RecipeCardProps) {
     }
   }
 
+
+  const isUUID = (id: string) => {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+  }
+
+  const [showTooltip, setShowTooltip] = useState(false)
+
   const handleViewRecipe = () => {
     if (onView) {
       onView()
@@ -47,6 +56,11 @@ export function RecipeCard({ recipe, onSave, onView }: RecipeCardProps) {
   }
 
   const handleSave = () => {
+    if (!isUUID(recipe.id)) {
+      setShowTooltip(true)
+      setTimeout(() => setShowTooltip(false), 2000)
+      return
+    }
     onSave(recipe.id)
   }
 
@@ -58,15 +72,26 @@ export function RecipeCard({ recipe, onSave, onView }: RecipeCardProps) {
           <h3 className="text-xl font-bold text-card-foreground line-clamp-2 group-hover:text-primary transition-colors flex-1">
             {recipe.name}
           </h3>
-          <button
-            onClick={handleSave}
-            className={cn(
-              "ml-3 p-2 rounded-full transition-all duration-200 hover:scale-110 flex-shrink-0",
-              recipe.isSaved ? "text-red-500" : "text-muted-foreground hover:text-red-500",
+          <div className="relative">
+            <button
+              onClick={handleSave}
+              disabled={!isUUID(recipe.id)}
+              className={cn(
+                "ml-3 p-2 rounded-full transition-all duration-200 hover:scale-110 flex-shrink-0",
+                recipe.isSaved ? "text-red-500" : "text-muted-foreground hover:text-red-500",
+                !isUUID(recipe.id) && "opacity-50 cursor-not-allowed"
+              )}
+              onMouseEnter={() => { if (!isUUID(recipe.id)) setShowTooltip(true) }}
+              onMouseLeave={() => setShowTooltip(false)}
+            >
+              <Heart className={cn("h-5 w-5", recipe.isSaved && "fill-current")} />
+            </button>
+            {showTooltip && !isUUID(recipe.id) && (
+              <div className="absolute left-1/2 -translate-x-1/2 mt-2 px-2 py-1 bg-black text-white text-xs rounded shadow z-10 whitespace-nowrap">
+                Saving is only available for recipes with a real ID.
+              </div>
             )}
-          >
-            <Heart className={cn("h-5 w-5", recipe.isSaved && "fill-current")} />
-          </button>
+          </div>
         </div>
 
         {/* Description */}

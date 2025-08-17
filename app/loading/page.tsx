@@ -8,12 +8,22 @@ export default function LoadingPage() {
   const router = useRouter()
 
   useEffect(() => {
-    // Simulate AI processing time (3-5 seconds)
-    const timer = setTimeout(() => {
-      router.push("/results")
-    }, 4000)
-
-    return () => clearTimeout(timer)
+    let elapsed = 0;
+    const pollInterval = 500; // ms
+    const maxWait = 60000; // 60s
+    const poll = () => {
+      const generatedRecipes = sessionStorage.getItem("generatedRecipes")
+      if (generatedRecipes && JSON.parse(generatedRecipes).length > 0) {
+        router.push("/results")
+      } else if (elapsed >= maxWait) {
+        router.push("/")
+      } else {
+        elapsed += pollInterval;
+        setTimeout(poll, pollInterval)
+      }
+    }
+    poll()
+    // No cleanup needed, as navigation will unmount
   }, [router])
 
   return (

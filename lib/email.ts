@@ -1,12 +1,19 @@
-import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+import nodemailer from 'nodemailer'
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+})
 
 export async function sendOTPEmail(email: string, otp: string, fullName?: string) {
   try {
-    const { data, error } = await resend.emails.send({
-      from: 'What\'s Cooking <onboarding@resend.dev>',
-      to: [email],
+    const info = await transporter.sendMail({
+      from: `What's Cooking <${process.env.GMAIL_USER}>`,
+      to: email,
       subject: 'Your verification code for What\'s Cooking',
       html: `
         <!DOCTYPE html>
@@ -91,7 +98,7 @@ export async function sendOTPEmail(email: string, otp: string, fullName?: string
           </body>
         </html>
       `,
-      text: `
+  text: `
 Hello${fullName ? ` ${fullName}` : ''}!
 
 Welcome to What's Cooking! 
@@ -107,13 +114,8 @@ The What's Cooking Team
       `
     })
 
-    if (error) {
-      console.error('Failed to send OTP email:', error)
-      return { success: false, error }
-    }
-
-    console.log('OTP email sent successfully:', data?.id)
-    return { success: true, data }
+    console.log('OTP email sent successfully:', info.messageId)
+    return { success: true, data: info }
   } catch (error) {
     console.error('Error sending OTP email:', error)
     return { success: false, error }
@@ -122,9 +124,9 @@ The What's Cooking Team
 
 export async function sendWelcomeEmail(email: string, fullName: string) {
   try {
-    const { data, error } = await resend.emails.send({
-      from: 'What\'s Cooking <onboarding@resend.dev>',
-      to: [email],
+    const info = await transporter.sendMail({
+      from: `What's Cooking <${process.env.GMAIL_USER}>`,
+      to: email,
       subject: 'Welcome to What\'s Cooking! 🍳',
       html: `
         <!DOCTYPE html>
@@ -207,7 +209,7 @@ export async function sendWelcomeEmail(email: string, fullName: string) {
           </body>
         </html>
       `,
-      text: `
+  text: `
 Hi ${fullName}!
 
 Welcome to What's Cooking! Your account has been successfully created.
@@ -227,13 +229,8 @@ The What's Cooking Team
       `
     })
 
-    if (error) {
-      console.error('Failed to send welcome email:', error)
-      return { success: false, error }
-    }
-
-    console.log('Welcome email sent successfully:', data?.id)
-    return { success: true, data }
+    console.log('Welcome email sent successfully:', info.messageId)
+    return { success: true, data: info }
   } catch (error) {
     console.error('Error sending welcome email:', error)
     return { success: false, error }

@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
 import { ChefHat, Clock, Users, Heart, ArrowLeft, BookOpen } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
-import RecipeCard from "@/components/recipe-card"
+import { RecipeCard } from "@/components/recipe-card"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
 interface SavedRecipe {
@@ -44,58 +44,61 @@ export default function SavedRecipesPage() {
       try {
         // Check authentication
         const { data: { session } } = await supabase.auth.getSession()
-        
         if (!session?.user) {
           router.push("/")
           return
         }
-
         setUser(session.user)
 
-        // Fetch user profile
-        const { data: profile } = await supabase
-          .from("user_profiles")
-          .select("full_name")
-          .eq("id", session.user.id)
-          .single()
-
-        setUserProfile(profile)
-
-        // Fetch saved recipes
-        const { data: savedRecipesData, error } = await supabase
-          .from("user_saved_recipes")
-          .select(`
-            id,
-            recipe_id,
-            saved_at,
-            recipe:recipes(
+        // Fetch user profile and saved recipes in parallel
+        const [profileRes, savedRecipesRes] = await Promise.all([
+          supabase
+            .from("user_profiles")
+            .select("full_name")
+            .eq("id", session.user.id)
+            .single(),
+          supabase
+            .from("user_saved_recipes")
+            .select(`
               id,
-              name,
-              description,
-              cuisine_type,
-              spice_level,
-              cooking_time,
-              difficulty,
-              servings,
-              ingredients,
-              instructions,
-              nutrition_info,
-              tags,
-              image_url
-            )
-          `)
-          .eq("user_id", session.user.id)
-          .order("saved_at", { ascending: false })
+              recipe_id,
+              saved_at,
+              recipe:recipes(
+                id,
+                name,
+                description,
+                cuisine_type,
+                spice_level,
+                cooking_time,
+                difficulty,
+                servings,
+                ingredients,
+                instructions,
+                nutrition_info,
+                tags,
+                image_url
+              )
+            `)
+            .eq("user_id", session.user.id)
+            .order("saved_at", { ascending: false })
+        ])
 
-        if (error) {
-          console.error("Error fetching saved recipes:", error)
+        setUserProfile(profileRes.data)
+
+        if (savedRecipesRes.error) {
+          console.error("Error fetching saved recipes:", savedRecipesRes.error)
           toast({
             title: "Error",
             description: "Failed to load saved recipes. Please try again.",
             variant: "destructive"
           })
         } else {
-          setSavedRecipes(savedRecipesData || [])
+          setSavedRecipes(
+            (savedRecipesRes.data || []).map((item: any) => ({
+              ...item,
+              recipe: Array.isArray(item.recipe) ? item.recipe[0] : item.recipe
+            }))
+          )
         }
       } catch (error) {
         console.error("Error:", error)
@@ -111,14 +114,7 @@ export default function SavedRecipesPage() {
 
     checkAuthAndLoadRecipes()
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!session?.user) {
-        router.push("/")
-      }
-    })
-
-    return () => subscription.unsubscribe()
+    // No global auth listener to prevent unwanted logouts
   }, [router, toast])
 
   const handleUnsaveRecipe = async (savedRecipeId: string) => {
@@ -149,12 +145,39 @@ export default function SavedRecipesPage() {
   }
 
   if (loading) {
+    // Show a skeleton loader for recipes instead of a full-page spinner
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <ChefHat className="h-12 w-12 text-primary mx-auto mb-4 animate-pulse" />
-          <p className="text-muted-foreground">Loading your saved recipes...</p>
-        </div>
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-sm border-b border-border shadow-sm">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <Button
+                variant="ghost"
+                onClick={() => router.push("/")}
+                className="text-foreground hover:bg-muted"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Home
+              </Button>
+              <div className="flex items-center space-x-2">
+                <BookOpen className="h-6 w-6 text-primary" />
+                <h1 className="text-xl font-bold text-foreground">My Saved Recipes</h1>
+              </div>
+            </div>
+          </div>
+        </header>
+        <main className="container mx-auto px-4 py-8">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="relative animate-pulse">
+                <div className="h-64 bg-muted rounded-2xl mb-4" />
+                <div className="h-6 bg-muted rounded w-2/3 mb-2" />
+                <div className="h-4 bg-muted rounded w-1/2 mb-2" />
+                <div className="h-4 bg-muted rounded w-1/3" />
+              </div>
+            ))}
+          </div>
+        </main>
       </div>
     )
   }
@@ -204,20 +227,19 @@ export default function SavedRecipesPage() {
               {savedRecipes.map((savedRecipe) => (
                 <div key={savedRecipe.id} className="relative">
                   <RecipeCard
-                    recipe={savedRecipe.recipe}
+                    recipe={{
+                      id: savedRecipe.recipe.id,
+                      name: savedRecipe.recipe.name,
+                      description: savedRecipe.recipe.description,
+                      difficulty: savedRecipe.recipe.difficulty as "Easy" | "Medium" | "Hard",
+                      prepTime: `${savedRecipe.recipe.cooking_time} min`,
+                      image: savedRecipe.recipe.image_url,
+                      isSaved: true,
+                    }}
                     onSave={() => handleUnsaveRecipe(savedRecipe.id)}
-                    isSaved={true}
+                    onView={() => router.push(`/recipe/${savedRecipe.recipe.id}?from=saved`)}
                   />
-                  <div className="absolute top-2 right-2 bg-background/90 rounded-full p-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleUnsaveRecipe(savedRecipe.id)}
-                      className="text-red-500 hover:text-red-600 hover:bg-red-50 h-8 w-8 p-0"
-                    >
-                      <Heart className="h-4 w-4 fill-current" />
-                    </Button>
-                  </div>
+                  {/* Removed extra heart button, RecipeCard handles save/unsave */}
                 </div>
               ))}
             </div>

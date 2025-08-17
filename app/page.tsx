@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { ChefHat, Clock, Heart, Sparkles, Users, Utensils, LogOut } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
-import { signOut } from "@/lib/actions"
+// import { signOut } from "@/lib/actions"
 import AuthModal from "@/components/auth/auth-modal"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -24,6 +24,15 @@ interface FormData {
 }
 
 export default function HomePage() {
+  // Add missing handler for dietary restrictions
+  const handleDietaryChange = (restriction: string, checked: boolean) => {
+    setFormData((prev) => ({
+      ...prev,
+      dietaryRestrictions: checked
+        ? [...prev.dietaryRestrictions, restriction]
+        : prev.dietaryRestrictions.filter((r) => r !== restriction),
+    }))
+  }
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [userProfile, setUserProfile] = useState<{ full_name: string } | null>(null)
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -39,88 +48,53 @@ export default function HomePage() {
   const { toast } = useToast()
   const router = useRouter()
 
-  useEffect(() => {
-    // Get initial session
-    const getInitialSession = async () => {
-      try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession()
-        
-        console.log("Current session:", session?.user?.email || "No user")
-        setUser(session?.user ?? null)
-
-        if (session?.user) {
-          console.log("User found, fetching profile...")
-          // Fetch user profile
-          const { data: profile, error: profileError } = await supabase
-            .from("user_profiles")
-            .select("full_name")
-            .eq("id", session.user.id)
-            .single()
-
-          if (profileError) {
-            console.error("Profile fetch error:", profileError)
-            // If no profile exists, still show user as authenticated
-            setUserProfile({ full_name: session.user.email?.split('@')[0] || 'User' })
-          } else {
-            console.log("Profile loaded:", profile)
-            setUserProfile(profile)
-          }
-        } else {
-          console.log("No authenticated user found")
-          setUserProfile(null)
-        }
-      } catch (error) {
-        console.error("Error getting session:", error)
-      }
-    }
-
-    getInitialSession()
-
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Auth state changed:", event, session?.user?.email || "No user")
+  // Expose session refresh logic for AuthModal
+  const refreshSession = async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
       setUser(session?.user ?? null)
-
       if (session?.user) {
-        console.log("User authenticated, fetching profile...")
-        // Fetch user profile
-        const { data: profile, error: profileError } = await supabase
+        const { data: profile } = await supabase
           .from("user_profiles")
           .select("full_name")
           .eq("id", session.user.id)
           .single()
-
-        if (profileError) {
-          console.error("Profile fetch error during auth change:", profileError)
-          // If no profile exists, still show user as authenticated  
-          setUserProfile({ full_name: session.user.email?.split('@')[0] || 'User' })
-        } else {
-          console.log("Profile loaded during auth change:", profile)
-          setUserProfile(profile)
-        }
+        setUserProfile(profile)
       } else {
-        console.log("User signed out")
+        setUserProfile(null)
+      }
+    } catch (error) {
+      console.error("Error fetching session:", error)
+    }
+  }
+
+  useEffect(() => {
+    refreshSession()
+    // Listen for auth state changes
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      setUser(session?.user ?? null)
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from("user_profiles")
+          .select("full_name")
+          .eq("id", session.user.id)
+          .single()
+        setUserProfile(profile)
+      } else {
         setUserProfile(null)
       }
     })
-
-    return () => subscription.unsubscribe()
+    return () => {
+      listener?.subscription.unsubscribe()
+    }
   }, [])
 
-  const handleDietaryChange = (restriction: string, checked: boolean) => {
-    setFormData((prev) => ({
-      ...prev,
-      dietaryRestrictions: checked
-        ? [...prev.dietaryRestrictions, restriction]
-        : prev.dietaryRestrictions.filter((r) => r !== restriction),
-    }))
-  }
+  // ...existing code...
 
   const handleSubmit = async () => {
+
     if (!formData.ingredients.trim()) {
       toast({
         title: "Missing ingredients!",
@@ -131,16 +105,13 @@ export default function HomePage() {
     }
 
     try {
-      // Navigate to loading page first
-      router.push("/loading")
-
       // Generate session ID for anonymous users
       const sessionId = crypto.randomUUID()
 
       // Prepare API request data
       const requestData = {
         ingredients: formData.ingredients
-          .split(/[,\n]/)
+          .split(/[\,\n]/)
           .map((i) => i.trim())
           .filter((i) => i.length > 0),
         cuisineType: formData.cuisineType || "any",
@@ -158,39 +129,50 @@ export default function HomePage() {
         sessionId,
       }
 
-      console.log("[v0] Calling AI recipe generation API...")
+      // Clear previous recipes and form data before starting new generation
+      sessionStorage.removeItem("generatedRecipes")
+      sessionStorage.removeItem("recipeFormData")
 
-      // Call the AI recipe generation API
-      const response = await fetch("/api/generate-recipes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestData),
-      })
+      // Go to loading page first
+      router.push("/loading")
 
-      if (!response.ok) {
-        throw new Error("Failed to generate recipes")
-      }
+      // Give the router a tick to navigate before blocking the UI
+      setTimeout(async () => {
+        try {
+          // Call the AI recipe generation API
+          const response = await fetch("/api/generate-recipes", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestData),
+          })
 
-      const result = await response.json()
+          if (!response.ok) {
+            throw new Error("Failed to generate recipes")
+          }
 
-      console.log("[v0] Generated recipes:", result.recipes?.length || 0)
+          const result = await response.json()
 
-      if (!result.recipes || result.recipes.length === 0) {
-        throw new Error("No recipes were generated")
-      }
+          if (!result.recipes || result.recipes.length === 0) {
+            throw new Error("No recipes were generated")
+          }
 
-      // Store the generated recipes and form data in session storage
-      sessionStorage.setItem("generatedRecipes", JSON.stringify(result.recipes))
-      sessionStorage.setItem("recipeFormData", JSON.stringify(formData))
-      sessionStorage.setItem("sessionId", sessionId)
-
-      setTimeout(() => {
-        router.push("/results")
-      }, 100)
+          // Store the generated recipes and form data in session storage
+          sessionStorage.setItem("generatedRecipes", JSON.stringify(result.recipes))
+          sessionStorage.setItem("recipeFormData", JSON.stringify(formData))
+          sessionStorage.setItem("sessionId", sessionId)
+        } catch (error) {
+          toast({
+            title: "Generation Failed",
+            description: "Failed to generate recipes. Please try again.",
+            variant: "destructive",
+          })
+          // Navigate back to home if there's an error
+          router.push("/")
+        }
+      }, 50)
     } catch (error) {
-      console.error("[v0] Recipe generation error:", error)
       toast({
         title: "Generation Failed",
         description: "Failed to generate recipes. Please try again.",
@@ -201,13 +183,18 @@ export default function HomePage() {
     }
   }
 
+
+
   const scrollToForm = () => {
     document.getElementById("recipe-form")?.scrollIntoView({ behavior: "smooth" })
   }
 
   const handleLogout = async () => {
     try {
-      await signOut()
+      await supabase.auth.signOut()
+      setUser(null)
+      setUserProfile(null)
+      router.push("/")
     } catch (error) {
       console.error("Logout error:", error)
       toast({
@@ -229,10 +216,6 @@ export default function HomePage() {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
-                <div className="flex items-center space-x-2 text-foreground">
-                  <LogOut className="h-4 w-4" />
-                  <span className="text-sm">{user.email}</span>
-                </div>
                 <Button
                   variant="outline"
                   className="border-primary text-primary hover:bg-primary hover:text-primary-foreground bg-transparent"
@@ -275,8 +258,14 @@ export default function HomePage() {
 
       <AuthModal 
         isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-        onAuthSuccess={() => setShowAuthModal(false)}
+        onClose={() => {
+          setShowAuthModal(false)
+          refreshSession()
+        }} 
+        onAuthSuccess={() => {
+          setShowAuthModal(false)
+          refreshSession()
+        }}
         defaultTab={authModalTab} 
       />
 
@@ -647,7 +636,7 @@ export default function HomePage() {
           </div>
 
           <div className="border-t border-border mt-8 pt-8 text-center">
-            <p className="text-muted-foreground text-sm">© 2024 What's Cooking? Made with ❤️ for families everywhere.</p>
+            <p className="text-muted-foreground text-sm">© 2025 What's Cooking? Made with ❤️ for families everywhere.</p>
           </div>
         </div>
       </footer>

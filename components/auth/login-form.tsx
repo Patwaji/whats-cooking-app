@@ -54,11 +54,15 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
       toast({
         title: "Login Successful!",
         description: "Welcome back! You have been signed in successfully.",
-        duration: 3000,
+        duration: 1500,
       })
 
-      // The auth state change should happen automatically now
-      onSuccess?.()
+  // Clear only recipe-related sessionStorage keys to avoid stale data from previous users
+  sessionStorage.removeItem("generatedRecipes")
+  sessionStorage.removeItem("recipeFormData")
+  sessionStorage.removeItem("sessionId")
+  // Force a reload to ensure correct user/session everywhere
+  window.location.href = "/"
       
     } catch (error) {
       console.error('Unexpected login error:', error)

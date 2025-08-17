@@ -30,29 +30,33 @@ export async function signUp(prevState: any, formData: FormData) {
       return { error: "Failed to generate verification code. Please try again." }
     }
 
-    // Send OTP via email
-    const emailResult = await sendOTPEmail(email.toString(), otpData, fullName.toString())
-    
+    // Send OTP email and store pending signup in parallel for speed
+    const cookieStore = await cookies()
+    const [emailRes] = await Promise.all([
+      fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to_email: email.toString(), otp_code: otpData })
+      }),
+      cookieStore.set(
+        "pending_signup",
+        JSON.stringify({
+          fullName: fullName.toString(),
+          email: email.toString(),
+          password: password.toString(),
+        }),
+        {
+          httpOnly: true,
+          secure: true,
+          maxAge: 600, // 10 minutes
+        },
+      )
+    ])
+    const emailResult = await emailRes.json()
     if (!emailResult.success) {
       console.error("Failed to send OTP email:", emailResult.error)
       return { error: "Failed to send verification email. Please try again." }
     }
-
-    // Store user data temporarily in session for OTP verification
-    const cookieStore = cookies()
-    cookieStore.set(
-      "pending_signup",
-      JSON.stringify({
-        fullName: fullName.toString(),
-        email: email.toString(),
-        password: password.toString(),
-      }),
-      {
-        httpOnly: true,
-        secure: true,
-        maxAge: 600, // 10 minutes
-      },
-    )
 
     console.log("OTP sent successfully to:", email.toString())
 
@@ -81,7 +85,7 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
   }
 
   const supabase = createClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
 
   try {
     console.log("Verifying OTP for email:", email.toString(), "OTP:", otp.toString())
@@ -106,7 +110,7 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
     console.log("OTP verification successful")
 
     // Get pending signup data
-    const pendingSignup = cookieStore.get("pending_signup")
+  const pendingSignup = cookieStore.get("pending_signup")
     if (!pendingSignup) {
       return { error: "Signup session expired. Please try again." }
     }
@@ -134,19 +138,27 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
 
     console.log("User created in Supabase:", authData.user?.id, authData.user?.email)
 
-    // Create user profile
-    if (authData.user) {
-      const { data: profileData, error: profileError } = await supabase.from("user_profiles").insert({
-        id: authData.user.id,
-        full_name: userData.fullName,
-        email: userData.email,
-      }).select()
 
-      if (profileError) {
-        console.error("Profile creation error:", profileError)
-        // Don't fail the whole process if profile creation fails
-      } else {
-        console.log("User profile created:", profileData)
+    if (authData.user) {
+      // Always create user_profiles row using a secure RPC (service role)
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/create-user-profile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: authData.user.id,
+            full_name: userData.fullName,
+            email: userData.email,
+          })
+        })
+        const result = await res.json()
+        if (!result.success) {
+          console.error("Profile creation error (RPC):", result.error)
+        } else {
+          console.log("User profile created via RPC:", result)
+        }
+      } catch (profileError) {
+        console.error("Profile creation error (RPC):", profileError)
       }
 
       // Send welcome email
@@ -164,7 +176,7 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
     // Clear pending signup data
     cookieStore.delete("pending_signup")
 
-    return { success: "Account created successfully! You can now sign in." }
+    return { success: "Account created successfully! Please log in to continue." }
   } catch (error) {
     console.error("OTP verification error:", error)
     return { error: "An unexpected error occurred. Please try again." }

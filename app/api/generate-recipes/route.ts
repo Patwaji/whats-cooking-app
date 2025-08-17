@@ -92,66 +92,59 @@ Please generate creative, delicious recipes with comprehensive instructions that
 
     console.log("[v0] Generated recipes:", generatedData.recipes.length)
 
+    // Insert all recipes in one call and get their UUIDs
     const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    const { data: savedRecipes, error } = await supabase
+      .from("recipes")
+      .insert(generatedData.recipes.map((recipe) => ({
+        name: recipe.name,
+        description: recipe.description,
+        cuisine_type: recipe.cuisine_type,
+        spice_level: recipe.spice_level,
+        dietary_restrictions: dietaryRestrictions || [],
+        cooking_time: recipe.cooking_time,
+        difficulty: recipe.difficulty,
+        servings: recipe.servings,
+        ingredients: recipe.ingredients,
+        instructions: recipe.instructions,
+        nutrition_info: recipe.nutrition_info,
+        tags: recipe.tags,
+        image_url: `/placeholder.svg?height=300&width=400&query=${encodeURIComponent(recipe.name + " " + recipe.cuisine_type + " dish")}`,
+        // Set expires_at for auto-deletion if not saved (1 hour from now)
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })))
+      .select("*")
 
-    // Store recipes in database
-    const recipeIds: string[] = []
-
-    for (const recipe of generatedData.recipes) {
-      const { data: savedRecipe, error } = await supabase
-        .from("recipes")
-        .insert({
-          name: recipe.name,
-          description: recipe.description,
-          cuisine_type: recipe.cuisine_type,
-          spice_level: recipe.spice_level,
-          dietary_restrictions: dietaryRestrictions || [],
-          cooking_time: recipe.cooking_time,
-          difficulty: recipe.difficulty,
-          servings: recipe.servings,
-          ingredients: recipe.ingredients,
-          instructions: recipe.instructions,
-          nutrition_info: recipe.nutrition_info,
-          tags: recipe.tags,
-          image_url: `/placeholder.svg?height=300&width=400&query=${encodeURIComponent(recipe.name + " " + recipe.cuisine_type + " dish")}`,
-        })
-        .select("id")
-        .single()
-
-      if (error) {
-        console.error("[v0] Error saving recipe:", error)
-        continue
-      }
-
-      if (savedRecipe) {
-        recipeIds.push(savedRecipe.id)
-      }
+    if (error || !savedRecipes) {
+      console.error("[v0] Error saving recipes:", error)
+      return NextResponse.json({ error: "Failed to save recipes to database." }, { status: 500 })
     }
 
-    // Store generation request
-    await supabase.from("recipe_generations").insert({
-      session_id: sessionId,
-      ingredients,
-      cuisine_type: cuisineType,
-      spice_level: spiceLevel,
-      dietary_restrictions: dietaryRestrictions || [],
-      cooking_time: cookingTime,
-      generated_recipe_ids: recipeIds,
-    })
+    // Store generation request if needed
+    if (savedRecipes && savedRecipes.length) {
+      await supabase.from("recipe_generations").insert({
+        session_id: sessionId,
+        ingredients,
+        cuisine_type: cuisineType,
+        spice_level: spiceLevel,
+        dietary_restrictions: dietaryRestrictions || [],
+        cooking_time: cookingTime,
+        generated_recipe_ids: savedRecipes.map((r) => r.id),
+      })
+      console.log("[v0] Stored", savedRecipes.length, "recipes in database")
+    }
 
-    console.log("[v0] Stored", recipeIds.length, "recipes in database")
-
-    // Return the generated recipes with database IDs
-    const recipesWithIds = generatedData.recipes.map((recipe, index) => ({
-      ...recipe,
-      id: recipeIds[index] || `temp-${index}`,
-      image_url: `/placeholder.svg?height=300&width=400&query=${encodeURIComponent(recipe.name + " " + recipe.cuisine_type + " dish")}`,
+    // Return recipes with real UUIDs to client
+    const recipesWithUUIDs = savedRecipes.map((recipe, i) => ({
+      ...generatedData.recipes[i],
+      id: recipe.id,
+      image_url: recipe.image_url,
     }))
 
     return NextResponse.json({
       success: true,
-      recipes: recipesWithIds,
-      count: recipesWithIds.length,
+      recipes: recipesWithUUIDs,
+      count: recipesWithUUIDs.length,
     })
   } catch (error) {
     console.error("[v0] Recipe generation error:", error)

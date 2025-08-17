@@ -9,8 +9,8 @@ export default async function AuthCallback({
   const code = searchParams.code
 
   if (code) {
-    const supabase = createClient()
-    await supabase.auth.exchangeCodeForSession(code)
+  const supabase = await createClient()
+  await supabase.auth.exchangeCodeForSession(code)
   }
 
   // Redirect to home page after successful authentication

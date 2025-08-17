@@ -1,20 +1,41 @@
 "use client"
 
+
 import { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Heart, Clock, ChefHat, Globe, Flame } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-import { AuthModal } from "@/components/auth/auth-modal"
+import AuthModal from "@/components/auth/auth-modal"
+import type { User as SupabaseUser } from "@supabase/supabase-js"
+
+interface Recipe {
+  id: string
+  name: string
+  description: string
+  cuisine_type: string
+  spice_level: string
+  cooking_time: number
+  difficulty: string
+  servings: number
+  ingredients: any[]
+  instructions: any[]
+  nutrition_info?: any
+  tags?: string[]
+  image_url?: string
+  notes?: string
+}
+
 
 export default function RecipeDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const [user, setUser] = useState(null)
+  const searchParams = useSearchParams()
+  const [user, setUser] = useState<SupabaseUser | null>(null)
   const [isSaved, setIsSaved] = useState(false)
-  const [recipe, setRecipe] = useState(null)
+  const [recipe, setRecipe] = useState<Recipe | null>(null)
   const [loading, setLoading] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [pendingSave, setPendingSave] = useState(false)
@@ -30,13 +51,17 @@ export default function RecipeDetailPage() {
     }
     checkAuth()
 
+    const isUUID = (id: string) => {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    }
+
     const loadRecipe = async () => {
       try {
         const recipeId = params.id as string
 
         // First try to get from session storage (recently generated recipes)
         const generatedRecipes = JSON.parse(sessionStorage.getItem("generatedRecipes") || "[]")
-        let recipeData = generatedRecipes.find((r) => r.id === recipeId)
+        let recipeData = generatedRecipes.find((r: Recipe) => r.id === recipeId)
 
         // If not found in session, try to fetch from database
         if (!recipeData) {
@@ -50,8 +75,8 @@ export default function RecipeDetailPage() {
         if (recipeData) {
           setRecipe(recipeData)
 
-          // Check if recipe is saved by current user
-          if (user) {
+          // Only check if saved if recipeId is a valid UUID
+          if (user && isUUID(recipeId)) {
             const { data: savedRecipe } = await supabase
               .from("user_saved_recipes")
               .select("id")
@@ -60,6 +85,8 @@ export default function RecipeDetailPage() {
               .single()
 
             setIsSaved(!!savedRecipe)
+          } else {
+            setIsSaved(false)
           }
         }
       } catch (error) {
@@ -157,7 +184,7 @@ export default function RecipeDetailPage() {
     )
   }
 
-  const getDifficultyColor = (difficulty) => {
+  const getDifficultyColor = (difficulty: string) => {
     switch (difficulty?.toLowerCase()) {
       case "easy":
         return "bg-green-500/20 text-green-400 border-green-500/30"
@@ -170,7 +197,7 @@ export default function RecipeDetailPage() {
     }
   }
 
-  const getSpiceLevelColor = (level) => {
+  const getSpiceLevelColor = (level: string) => {
     switch (level?.toLowerCase()) {
       case "mild":
         return "bg-green-500/20 text-green-400 border-green-500/30"
@@ -192,14 +219,17 @@ export default function RecipeDetailPage() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <Button
-                onClick={() => router.push("/results")}
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Results
-              </Button>
+                  onClick={() => {
+                    const from = searchParams.get("from")
+                    router.push(from === "saved" ? "/saved-recipes" : "/results")
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  className="text-slate-300 hover:text-white"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  {searchParams.get("from") === "saved" ? "Back to Saved Recipes" : "Back to Results"}
+                </Button>
             </div>
 
             <div className="flex items-center space-x-2">
@@ -302,7 +332,7 @@ export default function RecipeDetailPage() {
                 </h2>
                 <div className="bg-slate-700/30 rounded-lg p-6">
                   <ul className="space-y-3">
-                    {recipe.ingredients?.map((ingredient, index) => (
+                    {recipe.ingredients?.map((ingredient: any, index: number) => (
                       <li key={index} className="flex items-start space-x-3">
                         <span className="w-2 h-2 bg-amber-400 rounded-full mt-2 flex-shrink-0" />
                         <span className="text-slate-200 leading-relaxed">
@@ -325,7 +355,7 @@ export default function RecipeDetailPage() {
                   Instructions
                 </h2>
                 <div className="space-y-4">
-                  {recipe.instructions?.map((instruction, index) => (
+                  {recipe.instructions?.map((instruction: any, index: number) => (
                     <div key={index} className="flex space-x-4">
                       <span className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center text-amber-400 font-bold text-sm flex-shrink-0 mt-1">
                         {index + 1}
@@ -359,7 +389,7 @@ export default function RecipeDetailPage() {
       <footer className="bg-slate-800/50 border-t border-slate-700 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center text-slate-400">
-            <p>&copy; 2024 What's Cooking? All rights reserved.</p>
+            <p>&copy; 2025 What's Cooking? All rights reserved.</p>
           </div>
         </div>
       </footer>

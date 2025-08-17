@@ -1,3 +1,17 @@
+-- Function to delete expired, unsaved recipes
+CREATE OR REPLACE FUNCTION cleanup_expired_unsaved_recipes()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM recipes
+  WHERE expires_at IS NOT NULL
+    AND expires_at < NOW()
+    AND id NOT IN (SELECT recipe_id FROM user_saved_recipes);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- (Optional) Schedule the cleanup function to run every hour using pg_cron (if available)
+-- Requires the pg_cron extension to be enabled on your database
+-- SELECT cron.schedule('0 * * * *', $$SELECT cleanup_expired_unsaved_recipes();$$);
 -- Create recipes table to store AI-generated recipes
 CREATE TABLE IF NOT EXISTS recipes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -15,7 +29,8 @@ CREATE TABLE IF NOT EXISTS recipes (
   tags TEXT[], -- Array of tags
   image_url TEXT, -- URL to generated recipe image
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE -- For auto-deletion of unsaved recipes
 );
 
 -- Create user_saved_recipes table for tracking saved recipes
@@ -54,23 +69,67 @@ ALTER TABLE recipes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_saved_recipes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recipe_generations ENABLE ROW LEVEL SECURITY;
 
--- Recipes are publicly readable
-CREATE POLICY "Recipes are publicly readable" ON recipes
-  FOR SELECT USING (true);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Recipes are publicly readable' AND tablename = 'recipes'
+  ) THEN
+    CREATE POLICY "Recipes are publicly readable" ON recipes
+      FOR SELECT USING (true);
+  END IF;
+END $$;
 
--- Users can only see their own saved recipes
-CREATE POLICY "Users can view their own saved recipes" ON user_saved_recipes
-  FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can save recipes" ON user_saved_recipes
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Users can view their own saved recipes' AND tablename = 'user_saved_recipes'
+  ) THEN
+    CREATE POLICY "Users can view their own saved recipes" ON user_saved_recipes
+      FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+END $$;
 
-CREATE POLICY "Users can unsave recipes" ON user_saved_recipes
-  FOR DELETE USING (auth.uid() = user_id);
 
--- Users can view their own recipe generations
-CREATE POLICY "Users can view their own generations" ON recipe_generations
-  FOR SELECT USING (auth.uid() = user_id OR session_id IS NOT NULL);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Users can save recipes' AND tablename = 'user_saved_recipes'
+  ) THEN
+    CREATE POLICY "Users can save recipes" ON user_saved_recipes
+      FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
 
-CREATE POLICY "Anyone can create recipe generations" ON recipe_generations
-  FOR INSERT WITH CHECK (true);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Users can unsave recipes' AND tablename = 'user_saved_recipes'
+  ) THEN
+    CREATE POLICY "Users can unsave recipes" ON user_saved_recipes
+      FOR DELETE USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Users can view their own generations' AND tablename = 'recipe_generations'
+  ) THEN
+    CREATE POLICY "Users can view their own generations" ON recipe_generations
+      FOR SELECT USING (auth.uid() = user_id OR session_id IS NOT NULL);
+  END IF;
+END $$;
+
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can create recipe generations' AND tablename = 'recipe_generations'
+  ) THEN
+    CREATE POLICY "Anyone can create recipe generations" ON recipe_generations
+      FOR INSERT WITH CHECK (true);
+  END IF;
+END $$;

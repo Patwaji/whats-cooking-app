@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ChefHat, Sparkles, ArrowLeft, RefreshCw } from "lucide-react"
 import { RecipeCard } from "@/components/recipe-card"
-import { AuthModal } from "@/components/auth/auth-modal"
+import AuthModal from "@/components/auth/auth-modal"
 import { supabase } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -54,6 +54,11 @@ export default function ResultsPage() {
   }, [])
 
   useEffect(() => {
+    const isUUID = (id: string) => {
+      // Simple UUID v4 regex
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    }
+
     const loadGeneratedRecipes = async () => {
       try {
         const savedFormData = sessionStorage.getItem("recipeFormData")
@@ -63,42 +68,41 @@ export default function ResultsPage() {
           setFormData(JSON.parse(savedFormData))
         }
 
-        if (generatedRecipes) {
-          const parsedRecipes = JSON.parse(generatedRecipes)
-          console.log("[v0] Loaded generated recipes:", parsedRecipes.length)
-
-          if (parsedRecipes.length === 0) {
-            setHasResults(false)
-            setRecipes([])
-          } else {
-            let recipesWithSaveStatus = parsedRecipes
-
-            if (user) {
-              const { data: savedRecipes } = await supabase
-                .from("user_saved_recipes")
-                .select("recipe_id")
-                .eq("user_id", user.id)
-
-              const savedRecipeIds = savedRecipes?.map((sr) => sr.recipe_id) || []
-
-              recipesWithSaveStatus = parsedRecipes.map((recipe: Recipe) => ({
-                ...recipe,
-                isSaved: savedRecipeIds.includes(recipe.id),
-              }))
-            }
-
-            setRecipes(recipesWithSaveStatus)
-            setHasResults(true)
-          }
-        } else {
-          console.log("[v0] No generated recipes found, redirecting to home")
-          router.push("/")
+        if (!generatedRecipes || JSON.parse(generatedRecipes).length === 0) {
+          setHasResults(false)
+          setRecipes([])
+          setTimeout(() => router.push("/"), 1500)
           return
         }
+
+        const parsedRecipes = JSON.parse(generatedRecipes)
+        let recipesWithSaveStatus = parsedRecipes
+
+        if (user) {
+          // Only check Supabase for recipes with valid UUID ids
+          const uuidRecipeIds = parsedRecipes.filter((r: Recipe) => isUUID(r.id)).map((r: Recipe) => r.id)
+          let savedRecipeIds: string[] = []
+          if (uuidRecipeIds.length > 0) {
+            const { data: savedRecipes } = await supabase
+              .from("user_saved_recipes")
+              .select("recipe_id")
+              .eq("user_id", user.id)
+              .in("recipe_id", uuidRecipeIds)
+            savedRecipeIds = savedRecipes?.map((sr) => sr.recipe_id) || []
+          }
+          recipesWithSaveStatus = parsedRecipes.map((recipe: Recipe) => ({
+            ...recipe,
+            isSaved: isUUID(recipe.id) ? savedRecipeIds.includes(recipe.id) : false,
+          }))
+        }
+
+        setRecipes(recipesWithSaveStatus)
+        setHasResults(true)
       } catch (error) {
         console.error("[v0] Error loading recipes:", error)
         setHasResults(false)
         setRecipes([])
+        setTimeout(() => router.push("/"), 1500)
       } finally {
         setLoading(false)
       }
@@ -107,44 +111,61 @@ export default function ResultsPage() {
     loadGeneratedRecipes()
   }, [user, router])
 
-  const handleSaveRecipe = async (recipeId: number) => {
-    const recipeIdStr = recipeId.toString()
-
+  const handleSaveRecipe = async (recipeId: string) => {
     if (!user) {
-      setPendingSaveRecipeId(recipeIdStr)
+      setPendingSaveRecipeId(recipeId)
       setShowAuthModal(true)
       return
     }
 
     try {
-      const recipe = recipes.find((r) => r.id === recipeIdStr)
+      const recipe = recipes.find((r) => r.id === recipeId)
       if (!recipe) return
 
       if (recipe.isSaved) {
-        await supabase.from("user_saved_recipes").delete().eq("user_id", user.id).eq("recipe_id", recipeIdStr)
+        await supabase.from("user_saved_recipes").delete().eq("user_id", user.id).eq("recipe_id", recipeId)
       } else {
         await supabase.from("user_saved_recipes").insert({
           user_id: user.id,
-          recipe_id: recipeIdStr,
+          recipe_id: recipeId,
         })
       }
 
       setRecipes((prev) =>
-        prev.map((recipe) => (recipe.id === recipeIdStr ? { ...recipe, isSaved: !recipe.isSaved } : recipe)),
+        prev.map((recipe) => (recipe.id === recipeId ? { ...recipe, isSaved: !recipe.isSaved } : recipe)),
       )
     } catch (error) {
       console.error("[v0] Error saving recipe:", error)
     }
   }
 
+
   const handleAuthSuccess = async () => {
     setShowAuthModal(false)
 
+    // Always refresh session/user state after auth
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    setUser(session?.user ?? null)
+
+    // Wait for user state to be set before saving
     if (pendingSaveRecipeId) {
-      setTimeout(() => {
-        handleSaveRecipe(Number.parseInt(pendingSaveRecipeId))
-        setPendingSaveRecipeId(null)
-      }, 500)
+      // Wait until user is set (max 1s)
+      let tries = 0;
+      while (!session?.user && tries < 10) {
+        await new Promise((res) => setTimeout(res, 100));
+        const {
+          data: { session: newSession },
+        } = await supabase.auth.getSession();
+        setUser(newSession?.user ?? null);
+        if (newSession?.user) break;
+        tries++;
+      }
+      if (session?.user || tries > 0) {
+        handleSaveRecipe(pendingSaveRecipeId);
+        setPendingSaveRecipeId(null);
+      }
     }
   }
 
@@ -161,12 +182,19 @@ export default function ResultsPage() {
     router.push("/")
   }
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+    router.push("/")
+  }
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <ChefHat className="h-12 w-12 text-primary mx-auto mb-4 animate-pulse" />
-          <p className="text-muted-foreground">Loading your recipes...</p>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80">
+        <div className="text-center animate-fade-in">
+          <ChefHat className="h-16 w-16 text-primary mx-auto mb-6 animate-bounce" />
+          <p className="text-lg text-primary font-semibold mb-2">Loading your recipes...</p>
+          <p className="text-muted-foreground">Please wait while we prepare your delicious results.</p>
         </div>
       </div>
     )
@@ -190,10 +218,11 @@ export default function ResultsPage() {
                 <Button
                   variant="outline"
                   className="border-primary text-primary hover:bg-primary hover:text-primary-foreground bg-transparent"
+                  onClick={() => router.push("/saved-recipes")}
                 >
                   Saved Recipes
                 </Button>
-                <Button variant="ghost" className="text-foreground hover:bg-muted">
+                <Button variant="ghost" className="text-foreground hover:bg-muted" onClick={handleLogout}>
                   Logout
                 </Button>
               </>
@@ -201,7 +230,7 @@ export default function ResultsPage() {
               <Button
                 variant="ghost"
                 className="text-foreground hover:bg-muted"
-                onClick={() => router.push("/auth/login")}
+                onClick={() => setShowAuthModal(true)}
               >
                 Login / Signup
               </Button>
@@ -248,7 +277,7 @@ export default function ResultsPage() {
                   <RecipeCard
                     key={recipe.id}
                     recipe={{
-                      id: Number.parseInt(recipe.id),
+                      id: recipe.id,
                       name: recipe.name,
                       description: recipe.description,
                       difficulty: recipe.difficulty as "Easy" | "Medium" | "Hard",
@@ -308,14 +337,24 @@ export default function ResultsPage() {
         </div>
       </main>
 
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => {
-          setShowAuthModal(false)
-          setPendingSaveRecipeId(null)
-        }}
-        onAuthSuccess={handleAuthSuccess}
-      />
+      {user === null && (
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={() => {
+            setShowAuthModal(false)
+            setPendingSaveRecipeId(null)
+            // Always refresh session/user state after modal closes
+            const getUser = async () => {
+              const {
+                data: { session },
+              } = await supabase.auth.getSession()
+              setUser(session?.user ?? null)
+            }
+            getUser()
+          }}
+          onAuthSuccess={handleAuthSuccess}
+        />
+      )}
     </div>
   )
 }

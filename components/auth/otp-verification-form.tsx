@@ -43,12 +43,7 @@ export default function OTPVerificationForm({ email, onSuccess, onBack }: OTPVer
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
 
-  // Handle successful verification
-  useEffect(() => {
-    if (state?.success && onSuccess) {
-      onSuccess()
-    }
-  }, [state, onSuccess])
+  // Do not auto-close modal on success; just show message
 
   const handleOtpChange = (index: number, value: string) => {
     if (value.length > 1) return // Prevent multiple characters
@@ -108,7 +103,7 @@ export default function OTPVerificationForm({ email, onSuccess, onBack }: OTPVer
               {otp.map((digit, index) => (
                 <Input
                   key={index}
-                  ref={(el) => (inputRefs.current[index] = el)}
+                  ref={(el) => { inputRefs.current[index] = el }}
                   type="text"
                   inputMode="numeric"
                   maxLength={1}
