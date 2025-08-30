@@ -19,7 +19,7 @@ export async function signUp(prevState: any, formData: FormData) {
     return { error: "All fields are required" }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
 
   try {
     console.log("[SIGNUP] Starting signup process for email:", email.toString())
@@ -99,60 +99,76 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
     return { error: "Email and OTP are required" }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const cookieStore = await cookies()
 
   try {
-    console.log("[OTP] Verifying OTP for email:", email.toString(), "OTP:", otp.toString())
+    console.log("[OTP] Starting verification process...")
+    console.log("[OTP] Email:", email?.toString())
+    console.log("[OTP] OTP code:", otp?.toString())
+    console.log("[OTP] Form data keys:", Array.from(formData.keys()))
     
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
+    console.log("[OTP] Site URL:", siteUrl)
     
     // Verify OTP
+    console.log("[OTP] Calling Supabase RPC function...")
     const { data: isValid, error: verifyError } = await supabase.rpc("verify_otp", {
       user_email: email.toString(),
       provided_otp: otp.toString(),
     })
 
-    console.log("[OTP] OTP verification result:", { isValid, verifyError })
+    console.log("[OTP] RPC function response:", { isValid, verifyError })
 
     if (verifyError) {
-      console.error("OTP verification database error:", verifyError)
-      return { error: "Database error during OTP verification. Please check if the database functions are set up correctly." }
+      console.error("[OTP] Database error details:", JSON.stringify(verifyError, null, 2))
+      return { error: `Database error: ${verifyError.message || verifyError.hint || 'Unknown database error'}` }
     }
     
     if (!isValid) {
+      console.log("[OTP] OTP validation failed - code may be invalid or expired")
       return { error: "Invalid or expired OTP. Please check your email for the correct code." }
     }
     
-    console.log("OTP verification successful")
+    console.log("[OTP] OTP verification successful, proceeding with signup...")
 
     // Get pending signup data
     const pendingSignup = cookieStore.get("pending_signup")
+    console.log("[OTP] Pending signup cookie:", pendingSignup ? "Found" : "Not found")
+    
     if (!pendingSignup) {
       return { error: "Signup session expired. Please try signing in if you already have an account." }
     }
 
     const userData = JSON.parse(pendingSignup.value)
+    console.log("[OTP] User data from cookie:", { email: userData.email, fullName: userData.fullName })
 
     // First check if user already exists
+    console.log("[OTP] Checking current auth session...")
     const { data: existingUser } = await supabase.auth.getUser()
     if (existingUser.user) {
-      console.log("[SIGNUP] User already signed in:", existingUser.user.email)
+      console.log("[OTP] User already signed in:", existingUser.user.email)
       cookieStore.delete("pending_signup")
       redirect("/")
       return
     }
 
     // Check if user already exists in auth but not signed in
+    console.log("[OTP] Attempting to sign in existing user...")
     const { data: signInAttempt, error: signInAttemptError } = await supabase.auth.signInWithPassword({
       email: userData.email,
       password: userData.password,
     })
 
+    console.log("[OTP] Sign in attempt result:", { 
+      user: signInAttempt?.user?.email, 
+      error: signInAttemptError?.message 
+    })
+
     if (signInAttempt.user) {
-      console.log("[SIGNUP] User already exists, signing in:", signInAttempt.user.email)
+      console.log("[OTP] User already exists, signing in:", signInAttempt.user.email)
       
-      // Make sure profile exists
+      // Make sure profile exists (ignore if it already exists)
       try {
         const res = await fetch(`${siteUrl}/api/create-user-profile`, {
           method: "POST",
@@ -164,14 +180,26 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
           })
         })
         const result = await res.json()
-        console.log("[SIGNUP] Profile creation result:", result)
+        if (result.success) {
+          console.log("[SIGNUP] Profile created successfully:", result)
+        } else {
+          // Profile already exists - this is fine for existing users
+          if (result.error?.includes('duplicate key') || result.error?.includes('already exists')) {
+            console.log("[SIGNUP] Profile already exists (expected for existing user)")
+          } else {
+            console.error("[SIGNUP] Unexpected profile creation error:", result.error)
+          }
+        }
       } catch (profileError) {
         console.error("[SIGNUP] Profile creation error:", profileError)
       }
 
       cookieStore.delete("pending_signup")
+    }
+
+    // Handle redirect outside try-catch to avoid catching NEXT_REDIRECT
+    if (signInAttempt.user) {
       redirect("/")
-      return
     }
 
     // Create user account with email confirmation disabled (since we handle OTP ourselves)
@@ -228,10 +256,15 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
           })
         })
         const result = await res.json()
-        if (!result.success) {
-          console.error("[SIGNUP] Profile creation error:", result.error)
-        } else {
+        if (result.success) {
           console.log("[SIGNUP] User profile created successfully:", result)
+        } else {
+          // Profile already exists - this shouldn't happen for new users but handle gracefully
+          if (result.error?.includes('duplicate key') || result.error?.includes('already exists')) {
+            console.log("[SIGNUP] Profile already exists (unexpected but handled)")
+          } else {
+            console.error("[SIGNUP] Profile creation error:", result.error)
+          }
         }
       } catch (profileError) {
         console.error("[SIGNUP] Profile creation error:", profileError)
@@ -264,8 +297,10 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
 
       console.log("[SIGNUP] User automatically signed in:", signInData.user?.email)
 
-      // Clear pending signup data and redirect
+      // Clear pending signup data
       cookieStore.delete("pending_signup")
+      
+      // Handle redirect outside try-catch - this must be the last statement
       redirect("/")
       
     } else {
@@ -274,8 +309,31 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
       return { error: "Account creation failed. Please try again." }
     }
   } catch (error) {
-    console.error("OTP verification error:", error)
-    return { error: "An unexpected error occurred. Please try again." }
+    // Handle Next.js redirect - this is not actually an error
+    if (error instanceof Error && error.message === 'NEXT_REDIRECT') {
+      console.log("[OTP] Redirecting user to home page...")
+      throw error // Re-throw to allow Next.js to handle the redirect
+    }
+    
+    console.error("[OTP] Full error object:", error)
+    console.error("[OTP] Error message:", error instanceof Error ? error.message : String(error))
+    console.error("[OTP] Error stack:", error instanceof Error ? error.stack : 'No stack trace')
+    
+    // Provide more specific error messages based on the error type
+    if (error instanceof Error) {
+      if (error.message.includes('already registered')) {
+        return { error: "This email is already registered. Please try signing in instead." }
+      }
+      if (error.message.includes('network')) {
+        return { error: "Network connection error. Please check your internet and try again." }
+      }
+      if (error.message.includes('database')) {
+        return { error: "Database connection error. Please try again in a few minutes." }
+      }
+      return { error: `Error: ${error.message}` }
+    }
+    
+    return { error: "An unexpected error occurred during verification. Please try again." }
   }
 }
 
@@ -292,7 +350,7 @@ export async function signIn(prevState: any, formData: FormData) {
     return { error: "Email and password are required" }
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
 
   try {
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -315,7 +373,7 @@ export async function signIn(prevState: any, formData: FormData) {
 
 // Sign out
 export async function signOut() {
-  const supabase = createClient()
+  const supabase = await createClient()
   await supabase.auth.signOut()
   redirect("/")
 }
