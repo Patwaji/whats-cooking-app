@@ -22,18 +22,28 @@ export async function signUp(prevState: any, formData: FormData) {
   const supabase = createClient()
 
   try {
+    console.log("[SIGNUP] Starting signup process for email:", email.toString())
+    
     // First, generate OTP
+    console.log("[SIGNUP] Generating OTP...")
     const { data: otpData, error: otpError } = await supabase.rpc("generate_otp", { user_email: email.toString() })
 
     if (otpError) {
-      console.error("Failed to generate OTP:", otpError)
-      return { error: "Failed to generate verification code. Please try again." }
+      console.error("[SIGNUP] Failed to generate OTP:", otpError)
+      return { error: "Failed to generate verification code. Please check your database setup." }
     }
+
+    console.log("[SIGNUP] OTP generated successfully")
 
     // Send OTP email and store pending signup in parallel for speed
     const cookieStore = await cookies()
+    console.log("[SIGNUP] Sending OTP email...")
+    
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
+    console.log("[SIGNUP] Using site URL:", siteUrl)
+    
     const [emailRes] = await Promise.all([
-      fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/send-otp`, {
+      fetch(`${siteUrl}/api/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to_email: email.toString(), otp_code: otpData })
@@ -47,18 +57,22 @@ export async function signUp(prevState: any, formData: FormData) {
         }),
         {
           httpOnly: true,
-          secure: true,
+          secure: process.env.NODE_ENV === "production",
           maxAge: 600, // 10 minutes
         },
       )
     ])
+    
+    console.log("[SIGNUP] Email response status:", emailRes.status)
     const emailResult = await emailRes.json()
+    console.log("[SIGNUP] Email result:", emailResult)
+    
     if (!emailResult.success) {
-      console.error("Failed to send OTP email:", emailResult.error)
-      return { error: "Failed to send verification email. Please try again." }
+      console.error("[SIGNUP] Failed to send OTP email:", emailResult.error)
+      return { error: "Failed to send verification email. Please check your email configuration." }
     }
 
-    console.log("OTP sent successfully to:", email.toString())
+    console.log("[SIGNUP] OTP sent successfully to:", email.toString())
 
     return {
       success: "Verification code sent to your email. Please check your inbox and spam folder.",
@@ -66,8 +80,9 @@ export async function signUp(prevState: any, formData: FormData) {
       email: email.toString(),
     }
   } catch (error) {
-    console.error("Sign up error:", error)
-    return { error: "An unexpected error occurred. Please try again." }
+    console.error("[SIGNUP] Signup error:", error)
+    console.error("[SIGNUP] Error stack:", error instanceof Error ? error.stack : "No stack trace")
+    return { error: `Signup failed: ${error instanceof Error ? error.message : String(error)}` }
   }
 }
 
