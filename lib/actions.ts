@@ -103,7 +103,9 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
   const cookieStore = await cookies()
 
   try {
-    console.log("Verifying OTP for email:", email.toString(), "OTP:", otp.toString())
+    console.log("[OTP] Verifying OTP for email:", email.toString(), "OTP:", otp.toString())
+    
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
     
     // Verify OTP
     const { data: isValid, error: verifyError } = await supabase.rpc("verify_otp", {
@@ -111,7 +113,7 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
       provided_otp: otp.toString(),
     })
 
-    console.log("OTP verification result:", { isValid, verifyError })
+    console.log("[OTP] OTP verification result:", { isValid, verifyError })
 
     if (verifyError) {
       console.error("OTP verification database error:", verifyError)
@@ -125,21 +127,62 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
     console.log("OTP verification successful")
 
     // Get pending signup data
-  const pendingSignup = cookieStore.get("pending_signup")
+    const pendingSignup = cookieStore.get("pending_signup")
     if (!pendingSignup) {
-      return { error: "Signup session expired. Please try again." }
+      return { error: "Signup session expired. Please try signing in if you already have an account." }
     }
 
     const userData = JSON.parse(pendingSignup.value)
 
+    // First check if user already exists
+    const { data: existingUser } = await supabase.auth.getUser()
+    if (existingUser.user) {
+      console.log("[SIGNUP] User already signed in:", existingUser.user.email)
+      cookieStore.delete("pending_signup")
+      redirect("/")
+      return
+    }
+
+    // Check if user already exists in auth but not signed in
+    const { data: signInAttempt, error: signInAttemptError } = await supabase.auth.signInWithPassword({
+      email: userData.email,
+      password: userData.password,
+    })
+
+    if (signInAttempt.user) {
+      console.log("[SIGNUP] User already exists, signing in:", signInAttempt.user.email)
+      
+      // Make sure profile exists
+      try {
+        const res = await fetch(`${siteUrl}/api/create-user-profile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: signInAttempt.user.id,
+            full_name: userData.fullName,
+            email: userData.email,
+          })
+        })
+        const result = await res.json()
+        console.log("[SIGNUP] Profile creation result:", result)
+      } catch (profileError) {
+        console.error("[SIGNUP] Profile creation error:", profileError)
+      }
+
+      cookieStore.delete("pending_signup")
+      redirect("/")
+      return
+    }
+
     // Create user account with email confirmation disabled (since we handle OTP ourselves)
+    console.log("[SIGNUP] Creating new user account...")
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: userData.email,
       password: userData.password,
       options: {
         emailRedirectTo:
           process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
-          `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/auth/callback`,
+          `${siteUrl}/auth/callback`,
         data: {
           full_name: userData.fullName,
         },
@@ -147,17 +190,35 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
     })
 
     if (authError) {
-      console.error("Supabase signup error:", authError)
+      console.error("[SIGNUP] Supabase signup error:", authError)
+      // If user already exists, try to sign them in
+      if (authError.message.includes("already registered") || authError.message.includes("already exists")) {
+        console.log("[SIGNUP] User exists, attempting sign in...")
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: userData.email,
+          password: userData.password,
+        })
+        
+        if (signInData.user) {
+          console.log("[SIGNUP] Successfully signed in existing user")
+          cookieStore.delete("pending_signup")
+          redirect("/")
+          return
+        }
+        
+        return { error: "User already exists. Please sign in instead." }
+      }
       return { error: authError.message }
     }
 
-    console.log("User created in Supabase:", authData.user?.id, authData.user?.email)
+    console.log("[SIGNUP] User created in Supabase:", authData.user?.id, authData.user?.email)
 
 
     if (authData.user) {
       // Always create user_profiles row using a secure RPC (service role)
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/create-user-profile`, {
+        console.log("[SIGNUP] Creating user profile...")
+        const res = await fetch(`${siteUrl}/api/create-user-profile`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -168,47 +229,50 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
         })
         const result = await res.json()
         if (!result.success) {
-          console.error("Profile creation error (RPC):", result.error)
+          console.error("[SIGNUP] Profile creation error:", result.error)
         } else {
-          console.log("User profile created via RPC:", result)
+          console.log("[SIGNUP] User profile created successfully:", result)
         }
       } catch (profileError) {
-        console.error("Profile creation error (RPC):", profileError)
+        console.error("[SIGNUP] Profile creation error:", profileError)
+        // Don't fail the whole process if profile creation fails
       }
 
-      // Send welcome email
+      // Send welcome email (don't fail if this fails)
       try {
+        console.log("[SIGNUP] Sending welcome email...")
         await sendWelcomeEmail(userData.email, userData.fullName)
-        console.log("Welcome email sent successfully")
+        console.log("[SIGNUP] Welcome email sent successfully")
       } catch (emailError) {
-        console.error("Failed to send welcome email:", emailError)
+        console.error("[SIGNUP] Failed to send welcome email:", emailError)
         // Don't fail the signup process if email fails
       }
-    } else {
-      console.error("No user data returned from Supabase signup")
-    }
 
-    // Now automatically sign in the user
-    console.log("Auto-signing in the user...")
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-      email: userData.email,
-      password: userData.password,
-    })
+      // Now automatically sign in the user
+      console.log("[SIGNUP] Auto-signing in the user...")
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: userData.email,
+        password: userData.password,
+      })
 
-    if (signInError) {
-      console.error("Auto sign-in error:", signInError)
-      // Still return success since account was created, just need manual login
+      if (signInError) {
+        console.error("[SIGNUP] Auto sign-in error:", signInError)
+        // Still return success since account was created
+        cookieStore.delete("pending_signup")
+        return { success: "Account created successfully! Please sign in to continue." }
+      }
+
+      console.log("[SIGNUP] User automatically signed in:", signInData.user?.email)
+
+      // Clear pending signup data and redirect
       cookieStore.delete("pending_signup")
-      return { success: "Account created successfully! Please log in to continue." }
+      redirect("/")
+      
+    } else {
+      console.error("[SIGNUP] No user data returned from Supabase signup")
+      cookieStore.delete("pending_signup")
+      return { error: "Account creation failed. Please try again." }
     }
-
-    console.log("User automatically signed in:", signInData.user?.email)
-
-    // Clear pending signup data
-    cookieStore.delete("pending_signup")
-
-    // Redirect to home page after successful auto-login
-    redirect("/")
   } catch (error) {
     console.error("OTP verification error:", error)
     return { error: "An unexpected error occurred. Please try again." }
