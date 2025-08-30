@@ -78,6 +78,7 @@ Please respond with a JSON object in this exact format:
 }`
 
     console.log("[API] Calling Gemini API...")
+    console.log("[API] Using API key:", process.env.GEMINI_API_KEY?.substring(0, 10) + "...")
 
     // Initialize Gemini
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -91,28 +92,88 @@ Please respond with a JSON object in this exact format:
       }
     })
 
-    const result = await model.generateContent(prompt)
-    const response = await result.response
-    const text = response.text()
+    console.log("[API] Sending prompt to Gemini...")
+    let result, response, text;
+    try {
+      result = await model.generateContent(prompt)
+      response = await result.response
+      text = response.text()
+    } catch (geminiError) {
+      console.error("[API] Gemini API error:", geminiError)
+      return NextResponse.json({ 
+        error: "AI service temporarily unavailable. Please try again." 
+      }, { status: 503 })
+    }
     
-    console.log("[API] Raw Gemini response received")
+    console.log("[API] Gemini response length:", text.length)
+    console.log("[API] First 200 chars:", text.substring(0, 200))
 
     // Parse JSON response
     let parsedResponse
     try {
-      // Clean the response to extract JSON
-      const jsonStart = text.indexOf('{')
-      const jsonEnd = text.lastIndexOf('}') + 1
+      // Clean the response to extract JSON - handle markdown code blocks
+      let cleanedText = text.trim()
+      
+      // Remove markdown code block markers
+      if (cleanedText.startsWith('```json')) {
+        cleanedText = cleanedText.replace(/^```json\s*/, '')
+      }
+      if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText.replace(/^```\s*/, '')
+      }
+      if (cleanedText.endsWith('```')) {
+        cleanedText = cleanedText.replace(/\s*```$/, '')
+      }
+      
+      // Find JSON object bounds
+      const jsonStart = cleanedText.indexOf('{')
+      const jsonEnd = cleanedText.lastIndexOf('}') + 1
       
       if (jsonStart === -1 || jsonEnd === 0) {
         throw new Error("No JSON found in response")
       }
       
-      const jsonString = text.substring(jsonStart, jsonEnd)
+      let jsonString = cleanedText.substring(jsonStart, jsonEnd)
+      
+      // Fix common JSON issues that Gemini might produce
+      // Remove JSON comments (// ... lines)
+      jsonString = jsonString.replace(/\/\/.*$/gm, '')
+      
+      // Remove /* ... */ style comments
+      jsonString = jsonString.replace(/\/\*[\s\S]*?\*\//g, '')
+      
+      // Fix fractions like "1/2" to decimals like "0.5"
+      jsonString = jsonString.replace(/"amount":\s*"(\d+)\/(\d+)"/g, (match, num, denom) => {
+        const decimal = parseFloat(num) / parseFloat(denom)
+        return `"amount": "${decimal}"`
+      })
+      
+      // Fix standalone fractions without quotes
+      jsonString = jsonString.replace(/:\s*"(\d+)\/(\d+)"/g, (match, num, denom) => {
+        const decimal = parseFloat(num) / parseFloat(denom)
+        return `: "${decimal}"`
+      })
+      
+      // Fix duplicate unit fields by keeping only the last one
+      jsonString = jsonString.replace(/"unit":\s*"[^"]*",\s*"unit":\s*"([^"]*)"/g, '"unit": "$1"')
+      
+      // Fix non-numeric amounts in ingredients to be strings
+      jsonString = jsonString.replace(/"amount":\s*([^",\[\]{}]+),/g, '"amount": "$1",')
+      
+      // Clean up any trailing commas before closing braces/brackets
+      jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1')
+      
+      // Remove empty lines and extra whitespace
+      jsonString = jsonString.replace(/^\s*[\r\n]/gm, '')
+      
+      console.log("[API] Cleaned JSON string length:", jsonString.length)
+      console.log("[API] First 200 chars of JSON:", jsonString.substring(0, 200))
+      
       parsedResponse = JSON.parse(jsonString)
     } catch (parseError) {
       console.error("[API] JSON parse error:", parseError)
       console.error("[API] Raw response:", text.substring(0, 500))
+      console.error("[API] Full raw response:", text)
       return NextResponse.json({ error: "Failed to parse recipe data" }, { status: 500 })
     }
 
