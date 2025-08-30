@@ -1,55 +1,28 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { generateObject } from "ai"
-import { groq } from "@ai-sdk/groq"
 import { createClient } from "@supabase/supabase-js"
-import { z } from "zod"
-
-// Schema for recipe generation
-const RecipeSchema = z.object({
-  recipes: z.array(
-    z.object({
-      name: z.string(),
-      description: z.string(),
-      cuisine_type: z.string(),
-      spice_level: z.string(),
-      difficulty: z.enum(["Easy", "Medium", "Hard"]),
-      servings: z.number(),
-      cooking_time: z.number(),
-      ingredients: z.array(
-        z.object({
-          name: z.string(),
-          amount: z.string(),
-          unit: z.string().optional(),
-        }),
-      ),
-      instructions: z.array(
-        z.object({
-          step: z.number(),
-          instruction: z.string(),
-          time: z.number().optional(),
-        }),
-      ),
-      nutrition_info: z
-        .object({
-          calories: z.number().optional(),
-          protein: z.string().optional(),
-          carbs: z.string().optional(),
-          fat: z.string().optional(),
-        })
-        .optional(),
-      tags: z.array(z.string()),
-    }),
-  ),
-})
+import { GoogleGenerativeAI } from "@google/generative-ai"
 
 export async function POST(request: NextRequest) {
   try {
+    console.log("[API] Starting recipe generation with Gemini...")
+    
     const body = await request.json()
     const { ingredients, cuisineType, spiceLevel, dietaryRestrictions, cookingTime, sessionId } = body
 
     // Validate required fields
     if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) {
       return NextResponse.json({ error: "Ingredients are required" }, { status: 400 })
+    }
+
+    // Check if required env vars are present
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("[API] Missing GEMINI_API_KEY")
+      return NextResponse.json({ error: "Missing Gemini API configuration" }, { status: 500 })
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("[API] Missing SUPABASE_SERVICE_ROLE_KEY")
+      return NextResponse.json({ error: "Missing database configuration" }, { status: 500 })
     }
 
     const prompt = `Generate 6 diverse and creative recipes using the following criteria:
@@ -76,47 +49,117 @@ Requirements:
 - Ensure recipes respect dietary restrictions if specified
 - Instructions should be detailed enough that a beginner can follow them successfully
 
-Example of detailed instruction style:
-"Heat 2 tablespoons of olive oil in a large skillet over medium-high heat until shimmering (about 2-3 minutes). Add diced onions and cook, stirring occasionally, until translucent and lightly golden around the edges (5-7 minutes)."
+Please respond with a JSON object in this exact format:
+{
+  "recipes": [
+    {
+      "name": "Recipe Name",
+      "description": "Brief description",
+      "cuisine_type": "Cuisine Type",
+      "spice_level": "mild/medium/hot",
+      "difficulty": "Easy/Medium/Hard",
+      "servings": 4,
+      "cooking_time": 30,
+      "ingredients": [
+        {"name": "ingredient", "amount": "1 cup", "unit": "cup"}
+      ],
+      "instructions": [
+        {"step": 1, "instruction": "Detailed step", "time": 5}
+      ],
+      "nutrition_info": {
+        "calories": 350,
+        "protein": "25g",
+        "carbs": "30g",
+        "fat": "15g"
+      },
+      "tags": ["tag1", "tag2"]
+    }
+  ]
+}`
 
-Please generate creative, delicious recipes with comprehensive instructions that make the most of the available ingredients.`
+    console.log("[API] Calling Gemini API...")
 
-    console.log("[v0] Generating recipes with Groq...")
-
-    // Generate recipes using Groq
-    const { object: generatedData } = await generateObject({
-      model: groq("meta-llama/llama-4-maverick-17b-128e-instruct"),
-      prompt,
-      schema: RecipeSchema,
+    // Initialize Gemini
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 8192,
+      }
     })
 
-    console.log("[v0] Generated recipes:", generatedData.recipes.length)
+    const result = await model.generateContent(prompt)
+    const response = await result.response
+    const text = response.text()
+    
+    console.log("[API] Raw Gemini response received")
+
+    // Parse JSON response
+    let parsedResponse
+    try {
+      // Clean the response to extract JSON
+      const jsonStart = text.indexOf('{')
+      const jsonEnd = text.lastIndexOf('}') + 1
+      
+      if (jsonStart === -1 || jsonEnd === 0) {
+        throw new Error("No JSON found in response")
+      }
+      
+      const jsonString = text.substring(jsonStart, jsonEnd)
+      parsedResponse = JSON.parse(jsonString)
+    } catch (parseError) {
+      console.error("[API] JSON parse error:", parseError)
+      console.error("[API] Raw response:", text.substring(0, 500))
+      return NextResponse.json({ error: "Failed to parse recipe data" }, { status: 500 })
+    }
+
+    const generatedRecipes = parsedResponse.recipes
+    console.log("[API] Generated recipes count:", generatedRecipes?.length || 0)
+
+    if (!generatedRecipes || generatedRecipes.length === 0) {
+      console.error("[API] No recipes generated")
+      return NextResponse.json({ error: "No recipes generated" }, { status: 500 })
+    }
 
     // Insert all recipes in one call and get their UUIDs
     const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    
+    // Prepare recipe data for insertion
+    const recipesToInsert = generatedRecipes.map((recipe: any) => ({
+      name: recipe.name || "Untitled Recipe",
+      description: recipe.description || "A delicious recipe",
+      cuisine_type: recipe.cuisine_type || cuisineType || "Any",
+      spice_level: recipe.spice_level || spiceLevel || "medium",
+      dietary_restrictions: dietaryRestrictions || [],
+      cooking_time: recipe.cooking_time || cookingTime || 60,
+      difficulty: recipe.difficulty || "Medium",
+      servings: recipe.servings || 4,
+      ingredients: recipe.ingredients || [],
+      instructions: recipe.instructions || [],
+      nutrition_info: recipe.nutrition_info || {},
+      tags: recipe.tags || [],
+      image_url: `/placeholder.svg?height=300&width=400&query=${encodeURIComponent((recipe.name || "Recipe") + " " + (recipe.cuisine_type || "dish"))}`,
+      // Set expires_at for auto-deletion if not saved (1 hour from now)
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }))
+    
+    console.log("[API] Inserting recipes into Supabase:", recipesToInsert.length)
     const { data: savedRecipes, error } = await supabase
       .from("recipes")
-      .insert(generatedData.recipes.map((recipe) => ({
-        name: recipe.name,
-        description: recipe.description,
-        cuisine_type: recipe.cuisine_type,
-        spice_level: recipe.spice_level,
-        dietary_restrictions: dietaryRestrictions || [],
-        cooking_time: recipe.cooking_time,
-        difficulty: recipe.difficulty,
-        servings: recipe.servings,
-        ingredients: recipe.ingredients,
-        instructions: recipe.instructions,
-        nutrition_info: recipe.nutrition_info,
-        tags: recipe.tags,
-        image_url: `/placeholder.svg?height=300&width=400&query=${encodeURIComponent(recipe.name + " " + recipe.cuisine_type + " dish")}`,
-        // Set expires_at for auto-deletion if not saved (1 hour from now)
-        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      })))
+      .insert(recipesToInsert)
       .select("*")
 
     if (error || !savedRecipes) {
-      console.error("[v0] Error saving recipes:", error)
+      console.error("[API] Error saving recipes:", {
+        error,
+        code: error?.code,
+        details: error?.details,
+        message: error?.message,
+        hint: error?.hint
+      })
       return NextResponse.json({ error: "Failed to save recipes to database." }, { status: 500 })
     }
 
@@ -131,12 +174,12 @@ Please generate creative, delicious recipes with comprehensive instructions that
         cooking_time: cookingTime,
         generated_recipe_ids: savedRecipes.map((r) => r.id),
       })
-      console.log("[v0] Stored", savedRecipes.length, "recipes in database")
+      console.log("[API] Stored", savedRecipes.length, "recipes in database")
     }
 
     // Return recipes with real UUIDs to client
     const recipesWithUUIDs = savedRecipes.map((recipe, i) => ({
-      ...generatedData.recipes[i],
+      ...generatedRecipes[i],
       id: recipe.id,
       image_url: recipe.image_url,
     }))
@@ -147,7 +190,7 @@ Please generate creative, delicious recipes with comprehensive instructions that
       count: recipesWithUUIDs.length,
     })
   } catch (error) {
-    console.error("[v0] Recipe generation error:", error)
+    console.error("[API] Recipe generation error:", error)
     return NextResponse.json({ error: "Failed to generate recipes. Please try again." }, { status: 500 })
   }
 }
