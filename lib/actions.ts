@@ -188,10 +188,27 @@ export async function verifyOTPAndSignUp(prevState: any, formData: FormData) {
       console.error("No user data returned from Supabase signup")
     }
 
+    // Now automatically sign in the user
+    console.log("Auto-signing in the user...")
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: userData.email,
+      password: userData.password,
+    })
+
+    if (signInError) {
+      console.error("Auto sign-in error:", signInError)
+      // Still return success since account was created, just need manual login
+      cookieStore.delete("pending_signup")
+      return { success: "Account created successfully! Please log in to continue." }
+    }
+
+    console.log("User automatically signed in:", signInData.user?.email)
+
     // Clear pending signup data
     cookieStore.delete("pending_signup")
 
-    return { success: "Account created successfully! Please log in to continue." }
+    // Redirect to home page after successful auto-login
+    redirect("/")
   } catch (error) {
     console.error("OTP verification error:", error)
     return { error: "An unexpected error occurred. Please try again." }
